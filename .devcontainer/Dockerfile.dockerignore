@@ -1,0 +1,6 @@
+# 本镜像只安装工具链，没有 COPY/ADD；无需将整个项目作为构建上下文传入。
+# 使用 Dockerfile 专属 ignore 文件，避免影响仓库中其他镜像的构建。
+**
+!/.devcontainer/
+!/.devcontainer/Dockerfile
+!/.devcontainer/Dockerfile.dockerignore
