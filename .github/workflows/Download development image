@@ -1,0 +1,106 @@
+name: Download development image
+
+on:
+  workflow_dispatch:
+    inputs:
+      architecture:
+        description: 'Target architecture (Intel/AMD PC: amd64)'
+        type: choice
+        required: true
+        default: amd64
+        options:
+          - amd64
+          - arm64
+
+permissions:
+  contents: read
+
+jobs:
+  export:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Set up QEMU
+        if: inputs.architecture == 'arm64'
+        uses: docker/setup-qemu-action@v4
+        with:
+          platforms: arm64
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Build Docker image archive
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: .devcontainer/Dockerfile
+          platforms: linux/${{ inputs.architecture }}
+          tags: honeyghost-dev:offline
+          outputs: type=docker,dest=${{ runner.temp }}/honeyghost-dev.tar
+          cache-from: type=gha,scope=honeyghost-dev
+          cache-to: type=gha,mode=max,scope=honeyghost-dev
+
+      - name: Load archive and verify development environment
+        env:
+          IMAGE_ARCHIVE: ${{ runner.temp }}/honeyghost-dev.tar
+        run: |
+          docker load --input "$IMAGE_ARCHIVE"
+          docker run --rm honeyghost-dev:offline bash -lc '
+            set -eu
+            test "$(id -un)" = dev
+            test -w "$HOME/go/pkg/mod"
+            test -w "$HOME/.cache/go-build"
+            go version
+            clang --version
+            clangd-19 --version
+            cmake --version
+            bpftool version
+            protoc --version
+            pkg-config --exists libbpf libsystemd protobuf
+          '
+
+      - name: Compress archive and calculate checksum
+        env:
+          TARGET_ARCH: ${{ inputs.architecture }}
+          EXPORT_DIRECTORY: ${{ runner.temp }}/honeyghost-export
+          IMAGE_ARCHIVE: ${{ runner.temp }}/honeyghost-dev.tar
+        run: |
+          set -euo pipefail
+          case "$TARGET_ARCH" in amd64|arm64) ;; *) exit 1;; esac
+          mkdir -p "$EXPORT_DIRECTORY"
+          gzip -1 -c "$IMAGE_ARCHIVE" > "$EXPORT_DIRECTORY/honeyghost-dev-$TARGET_ARCH.tar.gz"
+          cd "$EXPORT_DIRECTORY"
+          sha256sum "honeyghost-dev-$TARGET_ARCH.tar.gz" > SHA256SUMS
+
+      - name: Upload downloadable image
+        id: upload
+        uses: actions/upload-artifact@v7
+        with:
+          name: honeyghost-dev-${{ inputs.architecture }}
+          path: ${{ runner.temp }}/honeyghost-export/
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 7
+
+      - name: Show download and import instructions
+        env:
+          TARGET_ARCH: ${{ inputs.architecture }}
+          ARTIFACT_URL: ${{ steps.upload.outputs.artifact-url }}
+        run: |
+          {
+            echo '### Download development image'
+            echo
+            echo "[Download artifact]($ARTIFACT_URL) (GitHub sign-in required; retained for 7 days)."
+            echo
+            echo 'Extract the downloaded ZIP, then run:'
+            echo '```sh'
+            echo "docker load --input honeyghost-dev-$TARGET_ARCH.tar.gz"
+            echo 'docker run --rm honeyghost-dev:offline bash -lc "go version; bpftool version"'
+            echo '```'
+            echo
+            echo 'Set devcontainer.json image to honeyghost-dev:offline.'
+            echo 'The local Docker engine must be running. This archive does not include project source or IDE extensions.'
+          } >> "$GITHUB_STEP_SUMMARY"
