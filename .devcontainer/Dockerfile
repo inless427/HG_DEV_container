@@ -153,7 +153,11 @@ ENV LANG=C.UTF-8 \
 RUN printf 'export PATH="/usr/local/go/bin:$HOME/go/bin:$PATH"\n' > /etc/profile.d/go-path.sh \
     && chmod 0644 /etc/profile.d/go-path.sh \
     && ln -sf /usr/local/go/bin/go /usr/local/bin/go \
-    && ln -sf /usr/local/go/bin/gofmt /usr/local/bin/gofmt
+    && ln -sf /usr/local/go/bin/gofmt /usr/local/bin/gofmt \
+    && ln -sf /usr/sbin/bpftool /usr/local/bin/bpftool
+
+# Debian 把 bpftool 装在 /usr/sbin，普通用户登录 shell 的 PATH 未必包含它。
+# 上面的链接让 dev 用户和 CMake find_program 都能按 bpftool 名称找到它。
 
 # 构建期打印一次全部版本，供确认工具链与预期一致——版本漂移在此处最易发现。
 # 走 bash -lc 是刻意的——PATH 被 /etc/profile 重置这类问题只在登录 shell 上暴露。
@@ -172,5 +176,8 @@ RUN mkdir -p /workspaces && chown ${USER_UID}:${USER_GID} /workspaces
 
 USER ${USERNAME}
 WORKDIR /workspaces
+
+# 用最终用户的登录 shell 检查，避免仅 root 构建检查通过而 dev 使用失败。
+RUN bash -lc 'set -eu; command -v bpftool; bpftool version; go version'
 
 CMD ["/bin/bash"]
